@@ -12,7 +12,8 @@ const server = http.createServer(app);
 const io = require("socket.io")(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
@@ -28,8 +29,8 @@ mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
-.then(() => console.log("✅ MongoDB Connected"))
-.catch(err => console.error("❌ MongoDB Error:", err));
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch(err => console.error("❌ MongoDB Error:", err));
 
 // Models
 const UserSchema = new mongoose.Schema({
@@ -78,7 +79,7 @@ app.post("/api/user", async (req, res) => {
   try {
     const { walletAddress, username } = req.body;
     let user = await User.findOne({ walletAddress });
-    
+
     if (!user) {
       user = new User({ walletAddress, username: username || "Player" });
       await user.save();
@@ -87,7 +88,7 @@ app.post("/api/user", async (req, res) => {
       if (username) user.username = username;
       await user.save();
     }
-    
+
     res.json(user);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -128,8 +129,8 @@ app.get("/api/games/:wallet", async (req, res) => {
       ],
       status: 'finished'
     })
-    .sort({ finishedAt: -1 })
-    .limit(50);
+      .sort({ finishedAt: -1 })
+      .limit(50);
     res.json(games);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -153,7 +154,7 @@ io.on("connection", (socket) => {
   socket.on("find-match", async (data) => {
     socket.walletAddress = data.wallet;
     socket.username = data.username || "Player";
-    
+
     // Check if already in queue
     const existingIndex = matchmakingQueue.findIndex(s => s.walletAddress === socket.walletAddress);
     if (existingIndex !== -1) {
@@ -163,10 +164,10 @@ io.on("connection", (socket) => {
     // Find opponent
     if (matchmakingQueue.length > 0) {
       const opponent = matchmakingQueue.shift();
-      
+
       // Create room
       const roomId = generateRoomId();
-      
+
       games[roomId] = {
         roomId,
         player1: { socket: opponent, wallet: opponent.walletAddress, username: opponent.username, side: 'white' },
@@ -199,7 +200,7 @@ io.on("connection", (socket) => {
         side: 'white',
         opponent: { username: socket.username, wallet: socket.walletAddress }
       });
-      
+
       socket.emit("match-found", {
         roomId,
         side: 'black',
@@ -228,7 +229,7 @@ io.on("connection", (socket) => {
     const roomId = generateRoomId();
     socket.walletAddress = data.wallet;
     socket.username = data.username || "Player";
-    
+
     games[roomId] = {
       roomId,
       player1: { socket, wallet: socket.walletAddress, username: socket.username, side: 'white' },
@@ -241,7 +242,7 @@ io.on("connection", (socket) => {
 
     socket.join(roomId);
     socket.roomId = roomId;
-    
+
     socket.emit("room-created", { roomId, side: 'white' });
     console.log(`🏠 Room created: ${roomId} by ${socket.username}`);
   });
@@ -251,14 +252,14 @@ io.on("connection", (socket) => {
     const { roomId, wallet, username } = data;
     socket.walletAddress = wallet;
     socket.username = username || "Player";
-    
+
     const game = games[roomId];
-    
+
     if (!game) {
       socket.emit("room-error", { message: "Room not found" });
       return;
     }
-    
+
     if (game.player2) {
       socket.emit("room-error", { message: "Room is full" });
       return;
@@ -266,7 +267,7 @@ io.on("connection", (socket) => {
 
     game.player2 = { socket, wallet: socket.walletAddress, username: socket.username, side: 'black' };
     game.status = 'playing';
-    
+
     socket.join(roomId);
     socket.roomId = roomId;
 
@@ -284,7 +285,7 @@ io.on("connection", (socket) => {
     game.player1.socket.emit("opponent-joined", {
       opponent: { username: socket.username, wallet: socket.walletAddress }
     });
-    
+
     socket.emit("room-joined", {
       roomId,
       side: 'black',
@@ -298,11 +299,11 @@ io.on("connection", (socket) => {
   socket.on("move", async (data) => {
     const { roomId, from, to } = data;
     const game = games[roomId];
-    
+
     if (game) {
       game.moves.push({ from, to, timestamp: new Date() });
       socket.to(roomId).emit("move", { from, to });
-      
+
       // Update database
       await Game.updateOne({ roomId }, { $push: { moves: { from, to, timestamp: new Date() } } });
     }
@@ -312,30 +313,30 @@ io.on("connection", (socket) => {
   socket.on("game-over", async (data) => {
     const { roomId, winner, loser } = data;
     const game = games[roomId];
-    
+
     if (game) {
       game.status = 'finished';
-      
+
       // Update database
-      await Game.updateOne({ roomId }, { 
-        status: 'finished', 
+      await Game.updateOne({ roomId }, {
+        status: 'finished',
         winner: winner,
-        finishedAt: new Date() 
+        finishedAt: new Date()
       });
 
       // Update user stats
       if (winner && loser) {
-        await User.updateOne({ walletAddress: winner }, { 
-          $inc: { wins: 1, gamesPlayed: 1, rating: 25 } 
+        await User.updateOne({ walletAddress: winner }, {
+          $inc: { wins: 1, gamesPlayed: 1, rating: 25 }
         });
-        await User.updateOne({ walletAddress: loser }, { 
-          $inc: { losses: 1, gamesPlayed: 1, rating: -15 } 
+        await User.updateOne({ walletAddress: loser }, {
+          $inc: { losses: 1, gamesPlayed: 1, rating: -15 }
         });
       }
 
       // Notify players
       io.to(roomId).emit("game-ended", { winner });
-      
+
       // Cleanup
       delete games[roomId];
     }
@@ -344,8 +345,8 @@ io.on("connection", (socket) => {
   // Chat message
   socket.on("chat", (data) => {
     const { roomId, message } = data;
-    socket.to(roomId).emit("chat", { 
-      username: socket.username, 
+    socket.to(roomId).emit("chat", {
+      username: socket.username,
       message,
       timestamp: new Date()
     });
@@ -355,33 +356,33 @@ io.on("connection", (socket) => {
   socket.on("resign", async (data) => {
     const { roomId } = data;
     const game = games[roomId];
-    
+
     if (game) {
-      const winner = game.player1.socket.id === socket.id 
-        ? game.player2?.wallet 
+      const winner = game.player1.socket.id === socket.id
+        ? game.player2?.wallet
         : game.player1.wallet;
-      
-      io.to(roomId).emit("player-resigned", { 
+
+      io.to(roomId).emit("player-resigned", {
         resignedPlayer: socket.walletAddress,
-        winner 
+        winner
       });
 
       // Update stats
       if (winner) {
-        await User.updateOne({ walletAddress: winner }, { 
-          $inc: { wins: 1, gamesPlayed: 1, rating: 25 } 
+        await User.updateOne({ walletAddress: winner }, {
+          $inc: { wins: 1, gamesPlayed: 1, rating: 25 }
         });
-        await User.updateOne({ walletAddress: socket.walletAddress }, { 
-          $inc: { losses: 1, gamesPlayed: 1, rating: -20 } 
+        await User.updateOne({ walletAddress: socket.walletAddress }, {
+          $inc: { losses: 1, gamesPlayed: 1, rating: -20 }
         });
       }
 
-      await Game.updateOne({ roomId }, { 
-        status: 'finished', 
+      await Game.updateOne({ roomId }, {
+        status: 'finished',
         winner,
-        finishedAt: new Date() 
+        finishedAt: new Date()
       });
-      
+
       delete games[roomId];
     }
   });
